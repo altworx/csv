@@ -34,6 +34,8 @@ quote(X) ->
 
 nl() -> "\n".
 
+crln() -> "\r\n".
+
 fs() -> ",".
 
 data_to_csv(Data) ->
@@ -68,7 +70,9 @@ pparse(CSV) ->
 
 trim_nl(Bin) ->
     Size = byte_size(Bin) - 1,
+    Size2 = Size - 1,
     case Bin of
+        <<Res:Size2/binary, $\r, $\n>> -> Res;
         <<Res:Size/binary, $\n>> -> Res;
         _ -> Bin
     end.
@@ -78,10 +82,19 @@ test_cases() ->
     Expect = data_to_result(Data),
     CSV = data_to_csv(Data),
     QCSV = data_to_csv(Data, fun quote/1),
+    CSV_DOS = data_to_csv(Data, fun to_iolist/1, crln()),
+    QCSV_DOS = data_to_csv(Data, fun quote/1, crln()),
+    QQCSV = <<"\"foo\"\"bar\",1,\" baz \",\"\"\"\"\n">>,
+    QQExp = [[<<"foo\"bar">>, <<"1">>, <<" baz ">>, <<"\"">>]],
     [  {"simple", CSV, Expect}
      , {"simple trim nl", trim_nl(CSV), Expect}
+     , {"simple dos", CSV_DOS, Expect}
+     , {"simple dos trim nl", trim_nl(CSV_DOS), Expect}
      , {"quoted", QCSV, Expect}
      , {"quoted trim nl", trim_nl(QCSV), Expect}
+     , {"quoted dos", QCSV_DOS, Expect}
+     , {"quoted dos trim nl", trim_nl(QCSV_DOS), Expect}
+     , {"quoted escape", QQCSV, QQExp}
     ].
 
 parse_test_() ->

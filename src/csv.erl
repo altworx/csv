@@ -43,6 +43,7 @@
 -define(QUOTE,     $").
 -define(FIELD_BY,  $,).
 -define(LINE_BY,   $\n).
+-define(CR,   $\r).
 
 %%
 %% parse(In, Fun, Acc0) -> Acc
@@ -65,6 +66,13 @@ parse(In, Pos, Len, Line, Fun, Acc0) when Pos + Len < size(In) ->
       <<_:Pos/binary, Tkn:Len/binary, ?FIELD_BY,  _/binary>> ->
          % field match
          parse(In, Pos + Len + 1, 0, [Tkn | Line], Fun, Acc0);
+      <<_:Pos/binary, Tkn:Len/binary, ?CR, ?LINE_BY>> ->
+         % last DOS line match
+         Fun(eof, Fun({line, [Tkn | Line]}, Acc0));
+      <<_:Pos/binary, Tkn:Len/binary, ?CR, ?LINE_BY, _/binary>>  ->
+         % line DOS match
+         parse(In, Pos + Len + 2, 0, [],
+               Fun, Fun({line, [Tkn | Line]}, Acc0));
       <<_:Pos/binary, Tkn:Len/binary, ?LINE_BY>> ->
          % last line match
          Fun(eof, Fun({line, [Tkn | Line]}, Acc0));
@@ -89,9 +97,13 @@ parse_quoted(In, Pos, Len, Line, Fun, Acc0) ->
       <<_:Pos/binary, Tkn:Len/binary, ?QUOTE, ?FIELD_BY, _/binary>> ->
          % field match
          parse(In, Pos + Len + 2, 0, [unescape(Tkn) | Line], Fun, Acc0);
+      <<_:Pos/binary, Tkn:Len/binary, ?QUOTE, ?CR, ?LINE_BY, _/binary>> ->
+         % field match
+         parse(In, Pos + Len + 3, 0, [], Fun,
+               Fun({line, [unescape(Tkn) | Line]}, Acc0));
       <<_:Pos/binary, Tkn:Len/binary, ?QUOTE, ?LINE_BY, _/binary>> ->
          % field match
-         parse(In, Pos + Len + 2, 0, [], Fun, 
+         parse(In, Pos + Len + 2, 0, [], Fun,
                Fun({line, [unescape(Tkn) | Line]}, Acc0));   
       <<_:Pos/binary, Tkn:Len/binary, ?QUOTE>> ->
          % field match
@@ -133,8 +145,14 @@ split(In, Count, Fun, Acc0) ->
  
 split(In, Pos, Size, Size0, Fun, Acc0) when Pos + Size < size(In) ->
    case In of
+      <<_:Pos/binary, Shard:Size/binary, ?CR, ?LINE_BY>> ->
+         Fun({shard, Shard}, Acc0);
       <<_:Pos/binary, Shard:Size/binary, ?LINE_BY>> ->
          Fun({shard, Shard}, Acc0);
+      <<_:Pos/binary, Shard:Size/binary, ?CR, ?LINE_BY, _/binary>> ->
+         split(In, Pos + Size + 2, Size0,    Size0, Fun,
+            Fun({shard, Shard}, Acc0)
+         );
       <<_:Pos/binary, Shard:Size/binary, ?LINE_BY, _/binary>> ->
          split(In, Pos + Size + 1, Size0,    Size0, Fun, 
             Fun({shard, Shard}, Acc0)
