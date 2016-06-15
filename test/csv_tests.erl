@@ -62,11 +62,18 @@ test_handler(eof, Acc) ->
   lists:reverse(Acc);
 test_handler(_, Acc) -> Acc.
 
+eof_counter_handler(eof, Acc) ->
+  Acc + 1;
+eof_counter_handler(_, Acc) -> Acc.
+
 parse(CSV) ->
   csv:parse(CSV, fun test_handler/2, []).
 
 parse_file(F) ->
   csv:parse(F, fun test_handler/2, []).
+
+count_eofs_in_file(F) ->
+  csv:parse(F, fun eof_counter_handler/2, 0).
 
 pparse(CSV) ->
   csv:pparse(CSV, 3, fun test_handler/2, []).
@@ -103,6 +110,10 @@ test_cases() ->
 parse_file_1_test() ->
   FileLines = parse_file({"test/FL_insurance_sample.csv", [read]}),
   ?assertEqual(1002, length(FileLines)).
+
+count_eofs_in_file_1_test() ->
+  EofCount = count_eofs_in_file({"test/FL_insurance_sample.csv", [read]}),
+  ?assertEqual(1, EofCount).
 
 parse_test_() ->
   [{N, ?_assertEqual(Expect, parse(CSV))}

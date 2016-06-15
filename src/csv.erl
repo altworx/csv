@@ -30,9 +30,9 @@
 %%                   Event Line 
 %%
 %%    The parser takes as input binary stream, event handler function and
-%%    initial state/accumulator. Event function is evaluated agains current 
-%%    accumulator and parsed line of csv-file. Note: The accumaltor allows to
-%%    carry-on application specific state throught event functions.
+%%    initial state/accumulator. Event function is evaluated against current
+%%    accumulator and parsed line of csv-file. Note: The accumulator allows to
+%%    carry-on application specific state through event functions.
 %%
 -module(csv).
 -author("Dmitry Kolesnikov <dmkolesnikov@gmail.com>").
@@ -50,73 +50,98 @@
 %%   In  = binary(), input csv data to parse
 %%   Fun = fun({line, Line}, Acc0) -> Acc, 
 %%      Line  - list() list of parsed fields in reverse order
-%%   Acc0 = term() application specific state/term carried throught
-%%                 parser event hadlers
+%%   Acc0 = term() application specific state/term carried through
+%%                 parser event handlers
 %%
 %% sequentially parses csv file
 %%
 
 
 parse(In, Fun, Acc0) when is_binary(In) ->
-  parse(In, 0, 0, [], Fun, Acc0);
+  parse(In, 0, 0, [], Fun, false, Acc0);
 parse({File, Modes}, Fun, Acc0) ->
   {ok, IO} = file:open(File, [binary | Modes]),
   Res = parse_file(IO, Fun, Acc0),
   file:close(IO),
   Res.
 
-parse(In, Pos, Len, Line, Fun, Acc0) when is_binary(In), Pos + Len < size(In) ->
+parse(In, Pos, Len, Line, Fun, ExtEof, Acc0) when is_binary(In), Pos + Len < size(In) ->
   case In of
     <<_:Pos/binary, _Tkn:Len/binary, ?QUOTE, _/binary>> ->
       % start field
-      parse_quoted(In, Pos + Len + 1, 0, Line, Fun, Acc0);
+      parse_quoted(In, Pos + Len + 1, 0, Line, Fun, ExtEof, Acc0);
     <<_:Pos/binary, Tkn:Len/binary, ?FIELD_BY, _/binary>> ->
       % field match
-      parse(In, Pos + Len + 1, 0, [Tkn | Line], Fun, Acc0);
+      parse(In, Pos + Len + 1, 0, [Tkn | Line], Fun, ExtEof, Acc0);
     <<_:Pos/binary, Tkn:Len/binary, ?CR, ?LINE_BY>> ->
       % last DOS line match
-      Fun(eof, Fun({line, [Tkn | Line]}, Acc0));
+      if
+        ExtEof =:= false ->
+          Fun(eof, Fun({line, [Tkn | Line]}, Acc0));
+        true ->
+          Fun({line, [Tkn | Line]}, Acc0)
+      end;
     <<_:Pos/binary, Tkn:Len/binary, ?CR, ?LINE_BY, _/binary>> ->
       % line DOS match
       parse(In, Pos + Len + 2, 0, [],
-        Fun, Fun({line, [Tkn | Line]}, Acc0));
+        Fun, ExtEof, Fun({line, [Tkn | Line]}, Acc0));
     <<_:Pos/binary, Tkn:Len/binary, ?LINE_BY>> ->
       % last line match
-      Fun(eof, Fun({line, [Tkn | Line]}, Acc0));
+      if
+        ExtEof =:= false ->
+          Fun(eof, Fun({line, [Tkn | Line]}, Acc0));
+        true ->
+          Fun({line, [Tkn | Line]}, Acc0)
+      end;
     <<_:Pos/binary, Tkn:Len/binary, ?LINE_BY, _/binary>> ->
       % line match
       parse(In, Pos + Len + 1, 0, [],
-        Fun, Fun({line, [Tkn | Line]}, Acc0));
+        Fun, ExtEof, Fun({line, [Tkn | Line]}, Acc0));
     _ ->
       % no match increase token
-      parse(In, Pos, Len + 1, Line, Fun, Acc0)
+      parse(In, Pos, Len + 1, Line, Fun, ExtEof, Acc0)
   end;
-parse(In, _Pos, 0, _Line, Fun, Acc0) when is_binary(In) ->
-  Fun(eof, Acc0);
-parse(In, Pos, Len, Line, Fun, Acc0) when is_binary(In) ->
+parse(In, _Pos, 0, _Line, Fun, ExtEof, Acc0) when is_binary(In) ->
+  if
+    ExtEof =:= false ->
+      Fun(eof, Acc0);
+    true ->
+      Acc0
+  end;
+parse(In, Pos, Len, Line, Fun, ExtEof, Acc0) when is_binary(In) ->
   <<_:Pos/binary, Tkn:Len/binary, _/binary>> = In,
-  Fun(eof, Fun({line, [Tkn | Line]}, Acc0)).
+  if
+    ExtEof =:= false ->
+      Fun(eof, Fun({line, [Tkn | Line]}, Acc0));
+    true ->
+      Fun({line, [Tkn | Line]}, Acc0)
+  end.
 
-parse_quoted(In, Pos, Len, Line, Fun, Acc0) ->
+parse_quoted(In, Pos, Len, Line, Fun, ExtEof, Acc0) ->
   case In of
     <<_:Pos/binary, _Tkn:Len/binary, ?QUOTE, ?QUOTE, _/binary>> ->
-      parse_quoted(In, Pos, Len + 2, Line, Fun, Acc0);
+      parse_quoted(In, Pos, Len + 2, Line, Fun, ExtEof, Acc0);
     <<_:Pos/binary, Tkn:Len/binary, ?QUOTE, ?FIELD_BY, _/binary>> ->
       % field match
-      parse(In, Pos + Len + 2, 0, [unescape(Tkn) | Line], Fun, Acc0);
+      parse(In, Pos + Len + 2, 0, [unescape(Tkn) | Line], Fun, ExtEof, Acc0);
     <<_:Pos/binary, Tkn:Len/binary, ?QUOTE, ?CR, ?LINE_BY, _/binary>> ->
       % field match
-      parse(In, Pos + Len + 3, 0, [], Fun,
+      parse(In, Pos + Len + 3, 0, [], Fun, ExtEof,
         Fun({line, [unescape(Tkn) | Line]}, Acc0));
     <<_:Pos/binary, Tkn:Len/binary, ?QUOTE, ?LINE_BY, _/binary>> ->
       % field match
-      parse(In, Pos + Len + 2, 0, [], Fun,
+      parse(In, Pos + Len + 2, 0, [], Fun, ExtEof,
         Fun({line, [unescape(Tkn) | Line]}, Acc0));
     <<_:Pos/binary, Tkn:Len/binary, ?QUOTE>> ->
       % field match
-      Fun(eof, Fun({line, [unescape(Tkn) | Line]}, Acc0));
+      if
+        ExtEof =:= false ->
+          Fun(eof, Fun({line, [unescape(Tkn) | Line]}, Acc0));
+        true ->
+          Acc0
+      end;
     _ ->
-      parse_quoted(In, Pos, Len + 1, Line, Fun, Acc0)
+      parse_quoted(In, Pos, Len + 1, Line, Fun, ExtEof, Acc0)
   end.
 
 %%
@@ -209,7 +234,7 @@ join([], Acc) ->
 
 parse_file(IO, Fun, Acc0) ->
   case file:read_line(IO) of
-    {ok, Data} -> parse_file(IO, Fun, parse(Data, 0, 0, [], Fun, Acc0));
-    eof -> parse(<<>>, 0, 0, [], Fun, Acc0);
+    {ok, Data} -> parse_file(IO, Fun, parse(Data, 0, 0, [], Fun, true, Acc0));
+    eof -> Fun(eof, Acc0);
     {error, Reason} -> error({csv_decoder_error, Reason})
   end.
