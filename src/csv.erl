@@ -60,7 +60,7 @@
 parse(In, Fun, Acc0) when is_binary(In) ->
   parse(In, 0, 0, [], Fun, false, Acc0);
 parse({File, Modes}, Fun, Acc0) ->
-  {ok, IO} = file:open(File, [binary | Modes]),
+  {ok, IO} = file:open(File, [binary, raw, read_ahead | Modes]),
   Res = parse_file(IO, Fun, Acc0),
   file:close(IO),
   Res.
